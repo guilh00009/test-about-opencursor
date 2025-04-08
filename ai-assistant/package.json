@@ -96,6 +96,11 @@
           "default": "fw_3ZMEgbYxRkZNQPUwxnjuCkMD",
           "description": "API key for Fireworks AI"
         },
+        "aiAssistant.apiBaseUrl": {
+          "type": "string",
+          "default": "https://api.fireworks.ai/inference/v1",
+          "description": "Base URL for the AI API"
+        },
         "aiAssistant.model": {
           "type": "string",
           "default": "accounts/fireworks/models/deepseek-v3-0324",

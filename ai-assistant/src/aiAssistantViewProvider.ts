@@ -473,33 +473,16 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.options = {
             enableScripts: true,
             localResourceRoots: [
-                this._extensionUri
+                vscode.Uri.joinPath(this._extensionUri, 'media')
             ]
         };
 
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        // Send initial chats data
-        webviewView.webview.postMessage({
-            type: 'updateChats',
-            chats: this._chats,
-            currentChatId: this._currentChatId
-        });
-
-        // If there's already a current chat, send its messages
-        const currentChat = this._getCurrentChat();
-        if (currentChat) {
-            webviewView.webview.postMessage({
-                type: 'restoreConversation',
-                messages: this._getMessagesForDisplay(currentChat.messages)
-            });
-        }
-
-        // Handle messages from the webview
-        webviewView.webview.onDidReceiveMessage(async (message: any) => {
-            switch (message.type) {
+        webviewView.webview.onDidReceiveMessage(async data => {
+            switch (data.type) {
                 case 'sendQuery':
-                    await this.sendQueryToAI(message.value);
+                    await this.sendQueryToAI(data.value);
                     break;
                 case 'clearConversation':
                     this.clearConversation();
@@ -508,22 +491,52 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     this.toggleLanguage();
                     break;
                 case 'restoreState':
-                    await this.restoreToState(message.messageId);
+                    await this.restoreToState(data.messageId);
                     break;
                 case 'createNewChat':
-                    this._createNewChat(message.title);
+                    this._createNewChat(data.title);
                     break;
                 case 'switchChat':
-                    this._switchChat(message.chatId);
+                    this._switchChat(data.chatId);
                     break;
                 case 'renameChat':
-                    this._renameChat(message.chatId, message.newTitle);
+                    this._renameChat(data.chatId, data.newTitle);
                     break;
                 case 'deleteChat':
-                    this._deleteChat(message.chatId);
+                    this._deleteChat(data.chatId);
+                    break;
+                case 'getConfiguration':
+                    this._getConfiguration();
+                    break;
+                case 'saveConfiguration':
+                    this._saveConfiguration(data.modelName, data.apiBaseUrl, data.apiKey);
                     break;
             }
         });
+
+        // Ensure a default chat exists
+        this._ensureDefaultChat();
+
+        // Send initial chat data to the webview
+        this._postMessageToWebview({
+            type: 'updateChats',
+            chats: this._chats,
+            currentChatId: this._currentChatId
+        });
+
+        // Get current chat messages (if any)
+        const currentChat = this._getCurrentChat();
+        if (currentChat) {
+            this._postMessageToWebview({
+                type: 'restoreConversation',
+                messages: this._getMessagesForDisplay(currentChat.messages)
+            });
+        }
+
+        // Show the view by focusing on it
+        if (!webviewView.visible) {
+            webviewView.show();
+        }
     }
 
     public async sendQueryToAI(query: string) {
@@ -637,7 +650,8 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                 apiKey = DEFAULT_API_KEY;
             }
 
-            const model = config.get<string>('model');
+            const model = config.get<string>('model') || "accounts/fireworks/models/deepseek-v3-0324";
+            const apiBaseUrl = config.get<string>('apiBaseUrl') || "https://api.fireworks.ai/inference/v1";
 
             // Strip out timestamp field from messages before sending to API
             const apiMessages = chat.messages.map(msg => ({
@@ -654,7 +668,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     "Authorization": `Bearer ${apiKey}`
                 },
                 body: JSON.stringify({
-                    model: model || "accounts/fireworks/models/deepseek-v3-0324",
+                    model: model,
                     max_tokens: 20480,
                     top_p: 1,
                     top_k: 40,
@@ -670,7 +684,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                 options.signal = this._abortController.signal;
             }
 
-            const response = await fetch("https://api.fireworks.ai/inference/v1/chat/completions", options);
+            const response = await fetch(`${apiBaseUrl}/chat/completions`, options);
 
             // Check if the request was aborted
             if (this._abortController && this._abortController.signal.aborted) {
@@ -1084,6 +1098,11 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     z-index: 1;
                 }
 
+                .header-actions {
+                    display: flex;
+                    gap: 8px;
+                }
+
                 .profile-icon {
                     width: 32px;
                     height: 32px;
@@ -1268,9 +1287,105 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     backdrop-filter: blur(4px);
                 }
 
-                .lang-button:hover {
+                .config-button {
+                    background-color: rgba(255, 255, 255, 0.1);
+                    color: var(--text-on-primary);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    border-radius: 6px;
+                    cursor: pointer;
+                    padding: 6px 12px;
+                    font-size: 12px;
+                    transition: all 0.3s ease;
+                    backdrop-filter: blur(4px);
+                }
+
+                .lang-button:hover, .config-button:hover {
                     background-color: rgba(255, 255, 255, 0.2);
                     transform: var(--hover-transform);
+                }
+
+                .config-modal {
+                    display: none;
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background-color: rgba(0, 0, 0, 0.5);
+                    z-index: 1000;
+                    justify-content: center;
+                    align-items: center;
+                }
+
+                .config-modal-content {
+                    background-color: var(--vscode-editor-background);
+                    border-radius: 8px;
+                    padding: 24px;
+                    width: 90%;
+                    max-width: 450px;
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+                    margin: 0 auto;
+                }
+
+                .config-form {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: stretch;
+                    width: 100%;
+                }
+
+                .config-modal-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 20px;
+                }
+
+                .config-modal-title {
+                    font-size: 18px;
+                    font-weight: bold;
+                }
+
+                .config-modal-close {
+                    background: none;
+                    border: none;
+                    font-size: 20px;
+                    cursor: pointer;
+                    color: var(--vscode-foreground);
+                }
+
+                .config-form-group {
+                    margin-bottom: 18px;
+                    width: 100%;
+                }
+
+                .config-label {
+                    display: block;
+                    margin-bottom: 8px;
+                    font-weight: 500;
+                }
+
+                .config-input {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border-radius: 6px;
+                    border: 1px solid var(--vscode-input-border);
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    box-sizing: border-box;
+                }
+
+                .config-save-button {
+                    background: var(--primary-gradient);
+                    color: var(--text-on-primary);
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px 16px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    margin-top: 12px;
+                    align-self: center;
+                    width: 80%;
                 }
 
                 .loading {
@@ -1403,8 +1518,8 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                 }
 
                 .new-chat-button {
-                    background-color: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
+                    background-color: var(--primary-color);
+                    color: var(--text-on-primary);
                     border: none;
                     border-radius: 3px;
                     padding: 5px 10px;
@@ -1415,7 +1530,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                 }
 
                 .new-chat-button:hover {
-                    background-color: var(--vscode-button-hoverBackground);
+                    background-color: #cc0000;
                 }
 
                 .new-chat-button svg {
@@ -1446,8 +1561,8 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                 }
 
                 .chat-item.active {
-                    background-color: var(--vscode-list-activeSelectionBackground);
-                    color: var(--vscode-list-activeSelectionForeground);
+                    background-color: var(--primary-color);
+                    color: var(--text-on-primary);
                 }
 
                 .chat-title {
@@ -1515,7 +1630,34 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                         </div>
                         <span>Samantha Coder</span>
                     </div>
-                    <button class="lang-button" id="lang-button">${translations[this._language].changeLanguageButton}</button>
+                    <div class="header-actions">
+                        <button class="config-button" id="config-button">⚙️ Config</button>
+                        <button class="lang-button" id="lang-button">${translations[this._language].changeLanguageButton}</button>
+                    </div>
+                </div>
+
+                <div class="config-modal" id="config-modal">
+                    <div class="config-modal-content">
+                        <div class="config-modal-header">
+                            <div class="config-modal-title">Configuration</div>
+                            <button class="config-modal-close" id="config-modal-close">&times;</button>
+                        </div>
+                        <div class="config-form">
+                            <div class="config-form-group">
+                                <label class="config-label" for="model-input">Model Name</label>
+                                <input type="text" id="model-input" class="config-input" placeholder="Enter model name">
+                            </div>
+                            <div class="config-form-group">
+                                <label class="config-label" for="api-base-url-input">API Base URL</label>
+                                <input type="text" id="api-base-url-input" class="config-input" placeholder="Enter API base URL">
+                            </div>
+                            <div class="config-form-group">
+                                <label class="config-label" for="api-key-input">API Key (optional)</label>
+                                <input type="password" id="api-key-input" class="config-input" placeholder="Enter API key">
+                            </div>
+                            <button class="config-save-button" id="config-save-button">Save Configuration</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="conversation" id="conversation">
@@ -1548,6 +1690,13 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     const loadingEl = document.getElementById('loading');
                     const chatListEl = document.getElementById('chat-list');
                     const newChatButton = document.getElementById('new-chat-button');
+                    const configButton = document.getElementById('config-button');
+                    const configModal = document.getElementById('config-modal');
+                    const configModalClose = document.getElementById('config-modal-close');
+                    const configSaveButton = document.getElementById('config-save-button');
+                    const modelInput = document.getElementById('model-input');
+                    const apiBaseUrlInput = document.getElementById('api-base-url-input');
+                    const apiKeyInput = document.getElementById('api-key-input');
 
                     // Current translations
                     let currentTranslations = ${JSON.stringify(translations[this._language])};
@@ -1583,30 +1732,8 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                         contentDiv.className = 'message-content';
                         contentDiv.innerHTML = formatMessage(message.content);
 
-                        // Add restore button for user messages
-                        if (message.role === 'user') {
-                            const actionsDiv = document.createElement('div');
-                            actionsDiv.className = 'message-actions';
-
-                            const restoreButton = document.createElement('button');
-                            restoreButton.className = 'restore-button';
-                            restoreButton.textContent = 'Restore state';
-                            restoreButton.title = 'Restore workspace to the state before this message was sent';
-                            restoreButton.onclick = () => {
-                                if (confirm('Are you sure you want to restore to the state before this message? Any files created or modified since then may be affected.')) {
-                                    vscode.postMessage({
-                                        type: 'restoreState',
-                                        messageId: message.timestamp
-                                    });
-                                }
-                            };
-
-                            actionsDiv.appendChild(restoreButton);
-                            messageEl.appendChild(contentDiv);
-                            messageEl.appendChild(actionsDiv);
-                        } else {
-                            messageEl.appendChild(contentDiv);
-                        }
+                        // Simply add content to the message for all message types
+                        messageEl.appendChild(contentDiv);
 
                         conversationEl.appendChild(messageEl);
                         conversationEl.scrollTop = conversationEl.scrollHeight;
@@ -1756,6 +1883,45 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                         }
                     });
 
+                    // Config button event
+                    configButton.addEventListener('click', () => {
+                        // Request current configuration values
+                        vscode.postMessage({
+                            type: 'getConfiguration'
+                        });
+
+                        // Show modal
+                        configModal.style.display = 'flex';
+                    });
+
+                    // Close modal when clicking close button
+                    configModalClose.addEventListener('click', () => {
+                        configModal.style.display = 'none';
+                    });
+
+                    // Close modal when clicking outside the modal content
+                    configModal.addEventListener('click', (e) => {
+                        if (e.target === configModal) {
+                            configModal.style.display = 'none';
+                        }
+                    });
+
+                    // Save configuration
+                    configSaveButton.addEventListener('click', () => {
+                        const modelName = modelInput.value.trim();
+                        const apiBaseUrl = apiBaseUrlInput.value.trim();
+                        const apiKey = apiKeyInput.value.trim();
+
+                        vscode.postMessage({
+                            type: 'saveConfiguration',
+                            modelName: modelName,
+                            apiBaseUrl: apiBaseUrl,
+                            apiKey: apiKey
+                        });
+
+                        configModal.style.display = 'none';
+                    });
+
                     // Handle messages from the extension
                     window.addEventListener('message', event => {
                         const message = event.data;
@@ -1796,14 +1962,12 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                                         addMessageToUI(msg);
                                     });
                                 }
-                                // Update active chat in the sidebar
-                                document.querySelectorAll('.chat-item').forEach(item => {
-                                    if (item.dataset.chatId === message.chatId) {
-                                        item.classList.add('active');
-                                    } else {
-                                        item.classList.remove('active');
-                                    }
-                                });
+                                break;
+                            case 'configuration':
+                                // Update configuration form with values from extension
+                                modelInput.value = message.model || '';
+                                apiBaseUrlInput.value = message.apiBaseUrl || '';
+                                apiKeyInput.value = message.apiKey || '';
                                 break;
                         }
                     });
@@ -2042,5 +2206,41 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
         }
 
         return deletedCount;
+    }
+
+    private async _getConfiguration() {
+        if (!this._view) {
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('aiAssistant');
+        const model = config.get('model');
+        const apiKey = config.get('apiKey');
+        const apiBaseUrl = config.get('apiBaseUrl');
+
+        this._postMessageToWebview({
+            type: 'configuration',
+            model,
+            apiKey,
+            apiBaseUrl
+        });
+    }
+
+    private async _saveConfiguration(modelName: string, apiBaseUrl: string, apiKey: string) {
+        const config = vscode.workspace.getConfiguration('aiAssistant');
+
+        if (modelName) {
+            await config.update('model', modelName, vscode.ConfigurationTarget.Global);
+        }
+
+        if (apiBaseUrl) {
+            await config.update('apiBaseUrl', apiBaseUrl, vscode.ConfigurationTarget.Global);
+        }
+
+        if (apiKey) {
+            await config.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
+        }
+
+        vscode.window.showInformationMessage('AI Assistant configuration updated');
     }
 }

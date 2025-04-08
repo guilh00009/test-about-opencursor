@@ -24,6 +24,8 @@ export declare class AIAssistantViewProvider implements vscode.WebviewViewProvid
     private _language;
     private _conversationHistory;
     private _trackedFiles;
+    private _abortController;
+    private _isGeneratingResponse;
     constructor(_extensionUri: vscode.Uri);
     private _ensureDefaultChat;
     private _createNewChat;
@@ -49,6 +51,8 @@ export declare class AIAssistantViewProvider implements vscode.WebviewViewProvid
     private _takeStateSnapshot;
     restoreToState(messageId: string): Promise<void>;
     private _deleteFiles;
+    private _getConfiguration;
+    private _saveConfiguration;
 }
 export {};
 //# sourceMappingURL=aiAssistantViewProvider.d.ts.map
