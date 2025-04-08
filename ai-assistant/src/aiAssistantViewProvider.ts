@@ -509,7 +509,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     this._getConfiguration();
                     break;
                 case 'saveConfiguration':
-                    this._saveConfiguration(data.modelName, data.apiBaseUrl, data.apiKey);
+                    this._saveConfiguration(data.modelName, data.apiBaseUrl, data.apiKey, data.maxTokens);
                     break;
             }
         });
@@ -652,6 +652,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
 
             const model = config.get<string>('model') || "accounts/fireworks/models/deepseek-v3-0324";
             const apiBaseUrl = config.get<string>('apiBaseUrl') || "https://api.fireworks.ai/inference/v1";
+            const maxTokens = config.get<number>('maxTokens') || 120000;
 
             // Strip out timestamp field from messages before sending to API
             const apiMessages = chat.messages.map(msg => ({
@@ -669,7 +670,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                 },
                 body: JSON.stringify({
                     model: model,
-                    max_tokens: 20480,
+                    max_tokens: maxTokens,
                     top_p: 1,
                     top_k: 40,
                     presence_penalty: 0,
@@ -1655,6 +1656,10 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                                 <label class="config-label" for="api-key-input">API Key (optional)</label>
                                 <input type="password" id="api-key-input" class="config-input" placeholder="Enter API key">
                             </div>
+                            <div class="config-form-group">
+                                <label class="config-label" for="max-tokens-input">Max Tokens</label>
+                                <input type="number" id="max-tokens-input" class="config-input" placeholder="Enter max tokens">
+                            </div>
                             <button class="config-save-button" id="config-save-button">Save Configuration</button>
                         </div>
                     </div>
@@ -1697,6 +1702,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                     const modelInput = document.getElementById('model-input');
                     const apiBaseUrlInput = document.getElementById('api-base-url-input');
                     const apiKeyInput = document.getElementById('api-key-input');
+                    const maxTokensInput = document.getElementById('max-tokens-input');
 
                     // Current translations
                     let currentTranslations = ${JSON.stringify(translations[this._language])};
@@ -1911,12 +1917,14 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                         const modelName = modelInput.value.trim();
                         const apiBaseUrl = apiBaseUrlInput.value.trim();
                         const apiKey = apiKeyInput.value.trim();
+                        const maxTokens = maxTokensInput.value.trim();
 
                         vscode.postMessage({
                             type: 'saveConfiguration',
                             modelName: modelName,
                             apiBaseUrl: apiBaseUrl,
-                            apiKey: apiKey
+                            apiKey: apiKey,
+                            maxTokens: maxTokens
                         });
 
                         configModal.style.display = 'none';
@@ -1968,6 +1976,7 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
                                 modelInput.value = message.model || '';
                                 apiBaseUrlInput.value = message.apiBaseUrl || '';
                                 apiKeyInput.value = message.apiKey || '';
+                                maxTokensInput.value = message.maxTokens || '';
                                 break;
                         }
                     });
@@ -2217,16 +2226,18 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
         const model = config.get('model');
         const apiKey = config.get('apiKey');
         const apiBaseUrl = config.get('apiBaseUrl');
+        const maxTokens = config.get('maxTokens');
 
         this._postMessageToWebview({
             type: 'configuration',
             model,
             apiKey,
-            apiBaseUrl
+            apiBaseUrl,
+            maxTokens
         });
     }
 
-    private async _saveConfiguration(modelName: string, apiBaseUrl: string, apiKey: string) {
+    private async _saveConfiguration(modelName: string, apiBaseUrl: string, apiKey: string, maxTokens: string) {
         const config = vscode.workspace.getConfiguration('aiAssistant');
 
         if (modelName) {
@@ -2239,6 +2250,13 @@ export class AIAssistantViewProvider implements vscode.WebviewViewProvider {
 
         if (apiKey) {
             await config.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
+        }
+
+        if (maxTokens) {
+            const maxTokensNum = parseInt(maxTokens, 10);
+            if (!isNaN(maxTokensNum) && maxTokensNum > 0) {
+                await config.update('maxTokens', maxTokensNum, vscode.ConfigurationTarget.Global);
+            }
         }
 
         vscode.window.showInformationMessage('AI Assistant configuration updated');

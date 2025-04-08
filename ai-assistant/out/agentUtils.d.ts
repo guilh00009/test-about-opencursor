@@ -10,7 +10,7 @@ export declare class AgentUtils {
     constructor();
     log(message: string): void;
     showOutputChannel(): void;
-    readFile(filePath: string): Promise<string>;
+    readFile(filePath: string, maxTokens?: number): Promise<string>;
     writeFile(filePath: string, content: string): Promise<void>;
     runCommand(command: string): Promise<string>;
     searchFiles(pattern: string): Promise<vscode.Uri[]>;

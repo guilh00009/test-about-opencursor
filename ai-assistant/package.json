@@ -101,6 +101,11 @@
           "default": "https://api.fireworks.ai/inference/v1",
           "description": "Base URL for the AI API"
         },
+        "aiAssistant.maxTokens": {
+          "type": "number",
+          "default": 120000,
+          "description": "Maximum tokens for the context window"
+        },
         "aiAssistant.model": {
           "type": "string",
           "default": "accounts/fireworks/models/deepseek-v3-0324",

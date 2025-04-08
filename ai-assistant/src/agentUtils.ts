@@ -38,11 +38,33 @@ export class AgentUtils {
 	}
 
 	// Read a file with optional path resolution
-	public async readFile(filePath: string): Promise<string> {
+	public async readFile(filePath: string, maxTokens?: number): Promise<string> {
 		try {
 			// Check if we need to resolve from workspace root
 			const resolvedPath = this._resolveFilePath(filePath);
-			return await readFile(resolvedPath, 'utf8');
+			let content = await readFile(resolvedPath, 'utf8');
+
+			// If maxTokens is specified, ensure the content is within limits
+			if (maxTokens && maxTokens > 0) {
+				// Estimate token count (roughly 4 chars per token)
+				const estimatedTokens = Math.ceil(content.length / 4);
+
+				if (estimatedTokens > maxTokens) {
+					this.log(`File content exceeds token limit (est. ${estimatedTokens} tokens). Truncating to ~${maxTokens} tokens.`);
+
+					// Calculate how much content to keep (roughly)
+					const keepChars = maxTokens * 4;
+					const halfKeep = Math.floor(keepChars / 2);
+
+					// Keep beginning and ending portions for context, with a message in the middle
+					const firstPart = content.substring(0, halfKeep);
+					const lastPart = content.substring(content.length - halfKeep);
+
+					content = `${firstPart}\n\n[...Content truncated to fit within ${maxTokens} token limit...]\n\n${lastPart}`;
+				}
+			}
+
+			return content;
 		} catch (error) {
 			this.log(`Error reading file: ${error instanceof Error ? error.message : String(error)}`);
 			throw error;
@@ -119,13 +141,17 @@ export class AgentUtils {
 	public async executeActions(actions: AgentAction[]): Promise<AgentAction[]> {
 		const results: AgentAction[] = [];
 
+		// Get the max tokens from configuration
+		const config = vscode.workspace.getConfiguration('aiAssistant');
+		const maxTokens = config.get<number>('maxTokens') || 120000;
+
 		for (const action of actions) {
 			try {
 				let result: any;
 
 				switch (action.type) {
 					case 'read':
-						result = await this.readFile(action.data.path);
+						result = await this.readFile(action.data.path, maxTokens);
 						break;
 
 					case 'write':
